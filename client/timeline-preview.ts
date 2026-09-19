@@ -71,7 +71,9 @@ export interface PreviewSessionSnapshot {
 
 export class PreviewSession {
   private active = false;
-  private revision = 0;
+  private generation = 0;
+  private refreshInFlight = false;
+  private queuedGeneration: number | null = null;
   private releaseTimeline: (() => void) | null = null;
 
   constructor(
@@ -84,39 +86,58 @@ export class PreviewSession {
   start(): () => void {
     this.stop();
     this.active = true;
+    const generation = this.generation;
     this.publish({ status: "loading", preview: null, error: null });
     if (this.live) {
-      this.releaseTimeline = this.paseo.agents.ref(this.agentId).timeline.subscribe(() => {
-        void this.refresh();
+      this.releaseTimeline = this.paseo.agents.ref(this.agentId).timeline.subscribe(({ event }) => {
+        if (event.type === "timeline" || event.type === "replacement") {
+          this.requestRefresh(generation);
+        }
       });
       void subscriptionReady(this.releaseTimeline)?.catch((error: unknown) => {
-        if (this.active) this.publishError(error);
+        if (this.active && generation === this.generation) this.publishError(error);
       });
     }
-    void this.refresh();
+    this.requestRefresh(generation);
     return () => this.stop();
   }
 
   stop(): void {
     this.active = false;
-    this.revision += 1;
+    this.generation += 1;
+    this.queuedGeneration = null;
     this.releaseTimeline?.();
     this.releaseTimeline = null;
   }
 
-  private async refresh(): Promise<void> {
-    const revision = ++this.revision;
+  private requestRefresh(generation: number): void {
+    if (!this.active || generation !== this.generation) return;
+    if (this.refreshInFlight) {
+      this.queuedGeneration = generation;
+      return;
+    }
+
+    this.refreshInFlight = true;
+    void this.refresh(generation).finally(() => {
+      this.refreshInFlight = false;
+      const queuedGeneration = this.queuedGeneration;
+      this.queuedGeneration = null;
+      if (queuedGeneration === this.generation) this.requestRefresh(queuedGeneration);
+    });
+  }
+
+  private async refresh(generation: number): Promise<void> {
     try {
       const result = await this.paseo.agents.ref(this.agentId).timeline.refetch({
         direction: "tail",
         limit: 12,
         projection: "projected",
       });
-      if (!this.active || revision !== this.revision) return;
+      if (!this.active || generation !== this.generation) return;
       if (result.error) throw new Error(result.error);
       this.publish({ status: "ready", preview: summarizeTimeline(result.entries), error: null });
     } catch (error) {
-      if (this.active && revision === this.revision) this.publishError(error);
+      if (this.active && generation === this.generation) this.publishError(error);
     }
   }
 

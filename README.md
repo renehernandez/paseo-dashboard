@@ -7,7 +7,7 @@ Paseo Dashboard is a client-only [Paseo](https://paseo.sh) plugin for monitoring
 - Live workspace agent directory updates
 - Root-agent and subagent hierarchy
 - Attention-first status ordering with text labels
-- Bounded, demand-loaded timeline previews
+- Bounded, demand-loaded timeline previews with coalesced live refreshes
 - Direct navigation to the full Paseo agent view when the host supports it
 - Wide and compact React Native layouts
 - No server process, persisted plugin state, telemetry, or copied conversation history
@@ -47,7 +47,7 @@ The summary reports the number of working, needs-input, and failed agents. The a
 4. Running work
 5. Done work
 
-The hierarchy derives parent relationships from Paseo's agent directory and orders siblings by creation time. Select **Show recent activity** to fetch a bounded timeline tail. A visible running preview observes live updates until you hide it or leave the panel. Preview errors do not remove the agent card or its **Open agent** action.
+The hierarchy derives parent relationships from Paseo's agent directory, orders siblings by creation time, and uses a virtualized list so large workspaces do not eagerly mount every card. Select **Show recent activity** to fetch a bounded timeline tail. A mounted running preview observes relevant live events, permits one timeline refetch at a time, and coalesces bursts until you hide it or leave the panel. Preview errors do not remove the agent card or its **Open agent** action.
 
 Older Paseo clients that do not provide plugin navigation omit **Open agent** and show an explanatory message.
 
@@ -71,7 +71,7 @@ paseo plugin reload paseo-dashboard
 
 ## Privacy and scope
 
-The plugin reads information already available to the connected, authorized Paseo client. It keeps directory and preview state in memory, requests at most 12 projected timeline entries per preview, and sends no telemetry.
+The plugin reads information already available to the connected, authorized Paseo client. It keeps directory and preview state in memory, requests at most 12 projected timeline entries per refresh, coalesces live refresh bursts, and sends no telemetry.
 
 Paseo Dashboard v1 does not answer permission requests, send prompts, create or archive agents, expose terminal controls, or manage workflow state. The full conversation and all agent controls remain in Paseo's agent view.
 

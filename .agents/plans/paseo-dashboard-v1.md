@@ -32,7 +32,7 @@ Create `renehernandez/paseo-dashboard` as a public, standalone Paseo plugin that
 - Agents are grouped into roots and descendants using Paseo's `parentAgentId`; siblings remain ordered by creation time.
 - Attention is ordered by required human action: pending permission, error or failed state, explicit attention, active work, then completed work.
 - Each agent card names the agent, provider/model when available, current state, recent activity, and parent/child relationship without relying on color alone.
-- Expanding or exposing an agent may load a bounded recent timeline tail. Live timeline observation exists only for visible running agents and is released when no longer needed.
+- Expanding or exposing an agent may load a bounded recent timeline tail. Live timeline observation exists only for mounted running previews, releases when no longer needed, filters irrelevant stream events, and coalesces bursts behind at most one in-flight refetch per preview.
 - Output previews distinguish assistant output, errors, permissions, and tool activity without rendering a full duplicate chat transcript. The complete conversation remains owned by Paseo's agent view.
 - Selecting **Open agent** uses `navigation.openAgent({ agentId })`. Older hosts that omit `navigation` see no broken action.
 - Compact layouts use stacked cards and disclosure. Wide layouts may show denser metadata but preserve the same information and actions.
@@ -62,9 +62,10 @@ Keep registration in `index.client.tsx`. Separate the implementation into:
 - a workspace panel composed from small React Native components;
 - a pure domain layer for hierarchy, status aggregation, attention ordering, and presentation models;
 - one owned directory-subscription store with snapshot/upsert/remove reconciliation and deterministic cleanup;
-- demand-loaded timeline preview helpers that fetch bounded history and observe only visible running agents.
+- demand-loaded timeline preview helpers that fetch bounded history, coalesce relevant live events behind one in-flight refetch, and observe only mounted running previews;
+- a flattened, virtualized hierarchy projection so large workspaces do not eagerly mount every agent card.
 
-Use React state and `useSyncExternalStore`-style subscription boundaries rather than adding a state-management or query library. Use Paseo's cached workspace/agent hooks where they fit exact focused records, and the public Paseo API with abortable effects for directory and bounded timeline operations.
+Use React state and `useSyncExternalStore`-style subscription boundaries rather than adding a state-management or query library. Use Paseo's cached workspace/agent hooks where they fit exact focused records, and the public Paseo API with generation-guarded directory loads and coalesced bounded timeline operations.
 
 ### Repository and delivery
 
@@ -100,10 +101,11 @@ The built-in Subagents Track is scoped to an opened parent agent. No upstream pl
 
 - **Runtime drift:** Pin development to the Paseo 0.8 scaffold versions and import only public plugin APIs. Treat a newer Paseo release as a separate compatibility update.
 - **Subscription leaks:** Centralize ownership and test release on unmount, filter change, replacement, and failure.
-- **Excess timeline traffic:** Fetch bounded tails on demand and live-observe only visible running agents.
+- **Excess timeline traffic:** Fetch bounded tails on demand, refresh only for relevant timeline/replacement events, permit one in-flight refetch per preview, and coalesce event bursts.
 - **Misleading aggregate status:** Preserve distinct concurrent states and give needs-input/failure precedence; never turn an idle parent into proof that descendants are done.
 - **Output disclosure:** Show only output already available to the connected authorized Paseo client, keep previews bounded, and persist nothing.
-- **Mobile density:** Use compact disclosure and text alternatives; do not reproduce a desktop table on mobile.
+- **Mobile density:** Use compact disclosure and text alternatives, flatten the hierarchy into a virtualized list, and avoid eagerly mounting the entire workspace on mobile.
+- **Stale relative time:** Refresh the panel clock periodically so idle-agent activity labels continue to age without unrelated directory events.
 - **Public bootstrap:** Seed only README/license/ignore state on `main`; all functional code and this plan go through the feature pull request.
 - **Rollback:** Disable or remove the plugin. No migration, daemon data, or external service state requires rollback.
 
@@ -121,7 +123,7 @@ Install the plugin from the feature checkout into an isolated Paseo 0.8 host and
 
 - **TypeScript validation:** the client-only plugin compiles under the official Paseo 0.8 scaffold configuration and versions.
 - **Unit tests:** hierarchy construction, deterministic sibling order, mixed-state aggregation, attention ordering, snapshot/upsert/remove reconciliation, and preview summarization.
-- **Subscription tests:** directory and timeline observations release on replacement and teardown; preview failure does not discard directory state.
+- **Subscription tests:** directory and timeline observations release on replacement and teardown; preview failure does not discard directory state; irrelevant events do not refetch; relevant event bursts coalesce behind one in-flight request.
 - **CI:** clean pnpm installation followed by named TypeScript and unit-test jobs on pull requests and `main`.
 
 ### Installed behavior layers
@@ -133,4 +135,4 @@ Install the plugin from the feature checkout into an isolated Paseo 0.8 host and
 
 ## Completion boundary
 
-The delivery is technically ready when the exact feature head is hook-clean, automated layers pass, isolated Paseo 0.8 wide and compact behavior is demonstrated, the Ready GitHub pull request exists, required CI is complete, and configured hosted review has no unresolved actionable finding. Merge, npm publication, live-daemon installation, and deployment require separate authority.
+The delivery is technically ready when the exact feature head is hook-clean, automated layers pass, isolated Paseo 0.8 wide and compact behavior is demonstrated, the Ready GitHub pull request exists, required CI is complete, and the local implementation review has no unresolved actionable finding. This OSS repository has no configured hosted automated reviewer. Merge, npm publication, live-daemon installation, and deployment require separate authority.

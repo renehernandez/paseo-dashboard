@@ -67,18 +67,54 @@ describe("timeline previews", () => {
     session.stop();
   });
 
+  it("coalesces relevant event bursts behind one in-flight refresh", async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    const release = vi.fn();
+    let onTimeline: ((update: { event: { type: string } }) => void) | undefined;
+    const refetch = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const paseo = {
+      agents: {
+        ref: () => ({
+          timeline: {
+            refetch,
+            subscribe: (handler: typeof onTimeline) => {
+              onTimeline = handler;
+              return release;
+            },
+          },
+        }),
+      },
+    } as unknown as DashboardPaseo;
+    const session = new PreviewSession(paseo, "agent", true, vi.fn());
+    session.start();
+
+    onTimeline?.({ event: { type: "usage_updated" } });
+    onTimeline?.({ event: { type: "timeline" } });
+    onTimeline?.({ event: { type: "timeline" } });
+    onTimeline?.({ event: { type: "replacement" } });
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    first.resolve({ entries: [], error: null });
+    await first.promise;
+    await vi.waitFor(() => expect(refetch).toHaveBeenCalledTimes(2));
+    second.resolve({ entries: [], error: null });
+    await second.promise;
+    session.stop();
+  });
+
   it("releases live observation and ignores a replacement fetch after teardown", async () => {
     const first = deferred<unknown>();
     const replacement = deferred<unknown>();
     const release = vi.fn();
-    let onTimeline: (() => void) | undefined;
+    let onTimeline: ((update: { event: { type: string } }) => void) | undefined;
     const refetch = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(replacement.promise);
     const paseo = {
       agents: {
         ref: () => ({
           timeline: {
             refetch,
-            subscribe: (handler: () => void) => {
+            subscribe: (handler: typeof onTimeline) => {
               onTimeline = handler;
               return release;
             },
@@ -93,7 +129,7 @@ describe("timeline previews", () => {
     first.resolve({ entries: [], error: null });
     await first.promise;
     await Promise.resolve();
-    onTimeline?.();
+    onTimeline?.({ event: { type: "timeline" } });
     stop();
     replacement.resolve({
       entries: [{ item: { type: "assistant_message", text: "stale" } }],

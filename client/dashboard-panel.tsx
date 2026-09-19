@@ -5,7 +5,7 @@ import {
   useWorkspace,
 } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { FlatList, Pressable, Text, View } from "react-native";
 import {
   type AgentNode,
   type DashboardAgent,
@@ -24,8 +24,8 @@ const INITIAL_PREVIEW: PreviewSessionSnapshot = {
   error: null,
 };
 
-function timeAgo(timestamp: string): string {
-  const elapsed = Date.now() - Date.parse(timestamp);
+function timeAgo(timestamp: string, now: number): string {
+  const elapsed = now - Date.parse(timestamp);
   if (!Number.isFinite(elapsed) || elapsed < 0) return "recently";
   const minutes = Math.floor(elapsed / 60_000);
   if (minutes < 1) return "just now";
@@ -105,6 +105,7 @@ function AgentCard({
   theme,
   paseo,
   onOpen,
+  now,
 }: {
   node: AgentNode;
   depth: number;
@@ -112,9 +113,10 @@ function AgentCard({
   theme: PluginTheme;
   paseo: ReturnType<typeof usePaseo>;
   onOpen?: (agentId: string) => void;
+  now: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { agent, aggregateState, children, state } = node;
+  const { agent, aggregateState, state } = node;
   const title = agent.title?.trim() || `Agent ${agent.id.slice(0, 8)}`;
   const provider = agent.model ? `${agent.provider} / ${agent.model}` : agent.provider;
   const nestedInset = compact ? Math.min(depth, 2) * 10 : Math.min(depth, 4) * 18;
@@ -161,7 +163,7 @@ function AgentCard({
         </View>
 
         <Text style={{ color: theme.colors.foregroundMuted }}>
-          {node.parentAgentId ? "Subagent" : "Root agent"} · Active {timeAgo(agent.updatedAt)}
+          {node.parentAgentId ? "Subagent" : "Root agent"} · Active {timeAgo(agent.updatedAt, now)}
         </Text>
 
         {expanded ? <Preview paseo={paseo} agent={agent} theme={theme} /> : null}
@@ -208,20 +210,20 @@ function AgentCard({
           ) : null}
         </View>
       </View>
-
-      {children.map((child) => (
-        <AgentCard
-          key={child.agent.id}
-          node={child}
-          depth={depth + 1}
-          compact={compact}
-          theme={theme}
-          paseo={paseo}
-          onOpen={onOpen}
-        />
-      ))}
     </View>
   );
+}
+
+interface HierarchyRow {
+  readonly node: AgentNode;
+  readonly depth: number;
+}
+
+function flattenHierarchy(nodes: readonly AgentNode[], depth = 0): HierarchyRow[] {
+  return nodes.flatMap((node) => [
+    { node, depth },
+    ...flattenHierarchy(node.children, depth + 1),
+  ]);
 }
 
 export function DashboardPanel({
@@ -237,7 +239,14 @@ export function DashboardPanel({
 
   useEffect(() => store.start(), [store]);
 
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const hierarchy = useMemo(() => buildAgentHierarchy(snapshot.agents), [snapshot.agents]);
+  const rows = useMemo(() => flattenHierarchy(hierarchy), [hierarchy]);
   const attention = useMemo(() => orderByAttention(snapshot.agents).slice(0, 5), [snapshot.agents]);
   const counts = useMemo(() => countStates(snapshot.agents), [snapshot.agents]);
   const openAgent = navigation
@@ -245,124 +254,129 @@ export function DashboardPanel({
     : undefined;
 
   return (
-    <ScrollView
+    <FlatList
       style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
-      contentContainerStyle={{
-        padding: layout.compact ? 12 : 24,
-        gap: layout.compact ? 14 : 20,
-      }}
-    >
-      <View style={{ gap: 5 }}>
-        <Text
-          style={{
-            color: theme.colors.foreground,
-            fontSize: layout.compact ? 22 : 28,
-            fontWeight: "800",
-          }}
-        >
-          {workspace?.name || "Workspace"} dashboard
-        </Text>
-        <Text style={{ color: theme.colors.foregroundMuted }}>
-          {snapshot.agents.length} agents · {counts.working} working · {counts.needs_input} need input ·{" "}
-          {counts.failed} failed
-        </Text>
-      </View>
-
-      {snapshot.status === "error" ? (
-        <View
-          style={{
-            gap: 10,
-            padding: 14,
-            borderRadius: 10,
-            backgroundColor: theme.colors.surface1,
-            borderWidth: 1,
-            borderColor: theme.colors.statusDanger,
-          }}
-        >
-          <Text style={{ color: theme.colors.statusDanger, fontWeight: "700" }}>
-            {snapshot.agents.length ? "Live updates are disconnected" : "Dashboard disconnected"}
-          </Text>
-          <Text style={{ color: theme.colors.foreground }}>{snapshot.error}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading workspace agents"
-            onPress={() => store.reload()}
-            style={{ alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 12 }}
-          >
-            <Text style={{ color: theme.colors.accent, fontWeight: "700" }}>Retry</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {snapshot.status === "loading" && snapshot.agents.length === 0 ? (
-        <Text style={{ color: theme.colors.foregroundMuted }}>Loading workspace agents…</Text>
-      ) : null}
-
-      {snapshot.status === "ready" && snapshot.agents.length === 0 ? (
-        <View style={{ padding: 20, gap: 6, borderRadius: 12, backgroundColor: theme.colors.surface1 }}>
-          <Text style={{ color: theme.colors.foreground, fontSize: 17, fontWeight: "700" }}>
-            No agents in this workspace
-          </Text>
-          <Text style={{ color: theme.colors.foregroundMuted }}>
-            Agents appear here as soon as Paseo creates them.
-          </Text>
-        </View>
-      ) : null}
-
-      {snapshot.agents.length > 0 ? (
-        <View style={{ gap: 10 }}>
-          <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: "700" }}>
-            Attention order
-          </Text>
-          <View style={{ flexDirection: layout.compact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
-            {attention.map(({ agent, state }) => (
-              <View
-                key={agent.id}
-                style={{
-                  minWidth: 0,
-                  flexGrow: layout.compact ? 0 : 1,
-                  flexBasis: layout.compact ? "auto" : 180,
-                  padding: 10,
-                  gap: 3,
-                  borderRadius: 9,
-                  backgroundColor: theme.colors.surface2,
-                }}
-              >
-                <Text style={{ color: stateColor(theme, state), fontWeight: "700" }}>
-                  {stateLabel(state)}
-                </Text>
-                <Text style={{ color: theme.colors.foreground }} numberOfLines={1}>
-                  {agent.title?.trim() || `Agent ${agent.id.slice(0, 8)}`}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
-
-      {snapshot.agents.length > 0 ? (
-        <View style={{ gap: 12 }}>
-          <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: "700" }}>
-            Agent hierarchy
-          </Text>
-          {hierarchy.map((node) => (
-            <AgentCard
-              key={node.agent.id}
-              node={node}
-              depth={0}
-              compact={layout.compact}
-              theme={theme}
-              paseo={paseo}
-              onOpen={openAgent}
-            />
-          ))}
-          {!navigation ? (
+      contentContainerStyle={{ padding: layout.compact ? 12 : 24 }}
+      data={rows}
+      keyExtractor={({ node }) => node.agent.id}
+      initialNumToRender={12}
+      windowSize={7}
+      ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+      ListHeaderComponent={
+        <View style={{ gap: layout.compact ? 14 : 20, marginBottom: rows.length ? 12 : 0 }}>
+          <View style={{ gap: 5 }}>
+            <Text
+              style={{
+                color: theme.colors.foreground,
+                fontSize: layout.compact ? 22 : 28,
+                fontWeight: "800",
+              }}
+            >
+              {workspace?.name || "Workspace"} dashboard
+            </Text>
             <Text style={{ color: theme.colors.foregroundMuted }}>
-              This Paseo client does not support opening agents from plugins.
+              {snapshot.agents.length} agents · {counts.working} working · {counts.needs_input} need input ·{" "}
+              {counts.failed} failed
+            </Text>
+          </View>
+
+          {snapshot.status === "error" ? (
+            <View
+              style={{
+                gap: 10,
+                padding: 14,
+                borderRadius: 10,
+                backgroundColor: theme.colors.surface1,
+                borderWidth: 1,
+                borderColor: theme.colors.statusDanger,
+              }}
+            >
+              <Text style={{ color: theme.colors.statusDanger, fontWeight: "700" }}>
+                {snapshot.agents.length ? "Live updates are disconnected" : "Dashboard disconnected"}
+              </Text>
+              <Text style={{ color: theme.colors.foreground }}>{snapshot.error}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading workspace agents"
+                onPress={() => store.reload()}
+                style={{ alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: theme.colors.accent, fontWeight: "700" }}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {snapshot.status === "loading" && snapshot.agents.length === 0 ? (
+            <Text style={{ color: theme.colors.foregroundMuted }}>Loading workspace agents…</Text>
+          ) : null}
+
+          {snapshot.status === "ready" && snapshot.agents.length === 0 ? (
+            <View style={{ padding: 20, gap: 6, borderRadius: 12, backgroundColor: theme.colors.surface1 }}>
+              <Text style={{ color: theme.colors.foreground, fontSize: 17, fontWeight: "700" }}>
+                No agents in this workspace
+              </Text>
+              <Text style={{ color: theme.colors.foregroundMuted }}>
+                Agents appear here as soon as Paseo creates them.
+              </Text>
+            </View>
+          ) : null}
+
+          {snapshot.agents.length > 0 ? (
+            <View style={{ gap: 10 }}>
+              <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: "700" }}>
+                Attention order
+              </Text>
+              <View style={{ flexDirection: layout.compact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
+                {attention.map(({ agent, state }) => (
+                  <View
+                    key={agent.id}
+                    style={{
+                      minWidth: 0,
+                      flexGrow: layout.compact ? 0 : 1,
+                      flexBasis: layout.compact ? "auto" : 180,
+                      padding: 10,
+                      gap: 3,
+                      borderRadius: 9,
+                      backgroundColor: theme.colors.surface2,
+                    }}
+                  >
+                    <Text style={{ color: stateColor(theme, state), fontWeight: "700" }}>
+                      {stateLabel(state)}
+                    </Text>
+                    <Text style={{ color: theme.colors.foreground }} numberOfLines={1}>
+                      {agent.title?.trim() || `Agent ${agent.id.slice(0, 8)}`}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {snapshot.agents.length > 0 ? (
+            <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: "700" }}>
+              Agent hierarchy
             </Text>
           ) : null}
         </View>
-      ) : null}
-    </ScrollView>
+      }
+      renderItem={({ item }) => (
+        <AgentCard
+          node={item.node}
+          depth={item.depth}
+          compact={layout.compact}
+          theme={theme}
+          paseo={paseo}
+          onOpen={openAgent}
+          now={now}
+        />
+      )}
+      ListFooterComponent={
+        snapshot.agents.length > 0 && !navigation ? (
+          <Text style={{ color: theme.colors.foregroundMuted, marginTop: 12 }}>
+            This Paseo client does not support opening agents from plugins.
+          </Text>
+        ) : null
+      }
+    />
   );
 }
