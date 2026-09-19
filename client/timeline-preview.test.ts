@@ -4,14 +4,16 @@ import { PreviewSession, summarizeTimeline } from "./timeline-preview";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("timeline previews", () => {
-  it("summarizes assistant, error, permission, and tool activity", () => {
+  it("summarizes assistant, error, and tool activity", () => {
     expect(summarizeTimeline([{ item: { type: "assistant_message", text: "  Ready to ship  " } }])).toEqual({
       kind: "assistant",
       label: "Assistant",
@@ -24,9 +26,6 @@ describe("timeline previews", () => {
       summarizeTimeline([{ item: { type: "assistant_message", text: "[System Error] unavailable" } }]),
     ).toMatchObject({ kind: "error", label: "Error" });
     expect(
-      summarizeTimeline([{ item: { type: "permission_request", message: "Allow command?" } }]),
-    ).toMatchObject({ kind: "permission", text: "Allow command?" });
-    expect(
       summarizeTimeline([{ item: { type: "tool_call", name: "Read", status: "running" } }]),
     ).toEqual({ kind: "tool", label: "Tool activity", text: "Read · running" });
   });
@@ -37,6 +36,35 @@ describe("timeline previews", () => {
     ]);
     expect(preview?.text).toHaveLength(180);
     expect(preview?.text.endsWith("…")).toBe(true);
+  });
+
+  it("reports a live observation readiness failure", async () => {
+    const ready = deferred<void>();
+    const release = Object.assign(vi.fn(), { ready: ready.promise });
+    const paseo = {
+      agents: {
+        ref: () => ({
+          timeline: {
+            refetch: vi.fn(() => new Promise(() => undefined)),
+            subscribe: () => release,
+          },
+        }),
+      },
+    } as unknown as DashboardPaseo;
+    const publish = vi.fn();
+    const session = new PreviewSession(paseo, "agent", true, publish);
+    session.start();
+
+    ready.reject(new Error("subscription failed"));
+    await ready.promise.catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(publish).toHaveBeenCalledWith({
+        status: "error",
+        preview: null,
+        error: "subscription failed",
+      }),
+    );
+    session.stop();
   });
 
   it("releases live observation and ignores a replacement fetch after teardown", async () => {

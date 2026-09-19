@@ -4,6 +4,7 @@ import type { DashboardAgent } from "./dashboard-model";
 export type DashboardPaseo = ReturnType<typeof usePaseo>;
 
 export type DirectoryStatus = "loading" | "ready" | "error";
+type AgentUpdate = Parameters<Parameters<DashboardPaseo["agents"]["subscribe"]>[0]>[0];
 
 export interface DirectorySnapshot {
   readonly status: DirectoryStatus;
@@ -33,7 +34,7 @@ export class DirectoryStore {
   start(): () => void {
     this.stopCurrent?.();
     let active = true;
-    const pending: Parameters<Parameters<DashboardPaseo["agents"]["subscribe"]>[0]>[0][] = [];
+    const pending: AgentUpdate[] = [];
     let loading = true;
 
     this.publish({ status: "loading", agents: this.snapshot.agents, error: null });
@@ -100,9 +101,7 @@ export class DirectoryStore {
     return agents;
   }
 
-  private apply(
-    update: Parameters<Parameters<DashboardPaseo["agents"]["subscribe"]>[0]>[0],
-  ): void {
+  private apply(update: AgentUpdate): void {
     const byId = new Map(this.snapshot.agents.map((agent) => [agent.id, agent]));
     if (update.kind === "remove") {
       byId.delete(update.agentId);

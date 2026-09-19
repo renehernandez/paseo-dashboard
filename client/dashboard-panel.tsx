@@ -87,9 +87,7 @@ function Preview({
           color:
             snapshot.preview.kind === "error"
               ? theme.colors.statusDanger
-              : snapshot.preview.kind === "permission"
-                ? theme.colors.statusWarning
-                : theme.colors.foregroundMuted,
+              : theme.colors.foregroundMuted,
           fontWeight: "600",
         }}
       >

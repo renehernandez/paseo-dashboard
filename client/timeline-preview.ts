@@ -1,6 +1,6 @@
 import type { DashboardPaseo } from "./directory-store";
 
-export type PreviewKind = "assistant" | "error" | "permission" | "tool" | "activity";
+export type PreviewKind = "assistant" | "error" | "tool" | "activity";
 
 export interface TimelinePreview {
   readonly kind: PreviewKind;
@@ -9,6 +9,11 @@ export interface TimelinePreview {
 }
 
 const PREVIEW_LIMIT = 180;
+
+function subscriptionReady(subscription: () => void): Promise<void> | null {
+  if (!("ready" in subscription)) return null;
+  return subscription.ready instanceof Promise ? subscription.ready : null;
+}
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -26,7 +31,7 @@ function bounded(value: string): string {
 export function summarizeTimeline(entries: readonly unknown[]): TimelinePreview | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = record(entries[index]);
-    const item = record(entry?.item ?? entries[index]);
+    const item = record(entry?.item);
     const type = text(item?.type);
     if (!item || !type) continue;
 
@@ -44,13 +49,6 @@ export function summarizeTimeline(entries: readonly unknown[]): TimelinePreview 
     if (type === "error") {
       const message = text(item.message);
       if (message) return { kind: "error", label: "Error", text: bounded(message) };
-    }
-    if (type.includes("permission")) {
-      return {
-        kind: "permission",
-        label: "Permission",
-        text: bounded(text(item.message) ?? "A permission response is required."),
-      };
     }
     if (type === "tool_call") {
       const name = text(item.name) ?? "Tool";
@@ -90,6 +88,9 @@ export class PreviewSession {
     if (this.live) {
       this.releaseTimeline = this.paseo.agents.ref(this.agentId).timeline.subscribe(() => {
         void this.refresh();
+      });
+      void subscriptionReady(this.releaseTimeline)?.catch((error: unknown) => {
+        if (this.active) this.publishError(error);
       });
     }
     void this.refresh();
