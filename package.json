@@ -1,0 +1,24 @@
+{
+  "name": "paseo-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A native workspace operations dashboard for Paseo",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "unit-test": "vitest run",
+    "verify": "pnpm run typecheck && pnpm run unit-test"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.8.0",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
+  }
+}
