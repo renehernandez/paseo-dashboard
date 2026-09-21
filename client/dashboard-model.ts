@@ -82,7 +82,7 @@ export function stateLabel(state: DashboardState): string {
   }
 }
 
-function validTime(value: string | null | undefined): number | null {
+export function validTime(value: string | null | undefined): number | null {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
@@ -196,6 +196,32 @@ export function buildDashboardProjection(
     }),
     otherBackground: other.sort(compareActivity).map((agent) => backgroundItem(agent, byId)),
   };
+}
+
+export function retainKeys(
+  current: ReadonlySet<string>,
+  valid: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const next = new Set([...current].filter((key) => valid.has(key)));
+  return next.size === current.size ? current : next;
+}
+
+export function removeKeysWithPrefix(
+  current: ReadonlySet<string>,
+  prefix: string,
+): ReadonlySet<string> {
+  const next = new Set([...current].filter((key) => !key.startsWith(prefix)));
+  return next.size === current.size ? current : next;
+}
+
+export function projectionPreviewKeys(projection: DashboardProjection): ReadonlySet<string> {
+  return new Set([
+    ...projection.interactive.map(({ agent }) => `interactive:${agent.id}`),
+    ...projection.interactive.flatMap(({ agent, background }) =>
+      background.map(({ agent: item }) => `background:${agent.id}:${item.id}`),
+    ),
+    ...projection.otherBackground.map(({ agent }) => `other:${agent.id}`),
+  ]);
 }
 
 export function visibleDashboardRows(

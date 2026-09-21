@@ -3,6 +3,9 @@ import {
   type DashboardAgent,
   agentState,
   buildDashboardProjection,
+  projectionPreviewKeys,
+  removeKeysWithPrefix,
+  retainKeys,
   visibleDashboardRows,
 } from "./dashboard-model";
 
@@ -124,5 +127,31 @@ describe("dashboard model", () => {
     expect(
       visibleDashboardRows(projection, new Set(["root"]), true).map(({ kind }) => kind),
     ).toEqual(["interactive", "background", "other_header", "other_background"]);
+  });
+
+  it("keeps preview disclosure separate from group expansion and clears stale ownership", () => {
+    const projection = buildDashboardProjection([
+      agent("root"),
+      agent("other-root"),
+      child("child", "root"),
+    ]);
+    const previews = new Set<string>();
+
+    visibleDashboardRows(projection, new Set(["root"]), false);
+    expect(retainKeys(previews, projectionPreviewKeys(projection))).toBe(previews);
+
+    const disclosed = new Set(["background:root:child", "interactive:root"]);
+    expect([...removeKeysWithPrefix(disclosed, "background:root:")]).toEqual([
+      "interactive:root",
+    ]);
+
+    const reparented = buildDashboardProjection([
+      agent("root"),
+      agent("other-root"),
+      child("child", "other-root"),
+    ]);
+    expect([...retainKeys(disclosed, projectionPreviewKeys(reparented))]).toEqual([
+      "interactive:root",
+    ]);
   });
 });

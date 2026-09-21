@@ -14,7 +14,11 @@ import {
   type InteractiveAgent,
   buildDashboardProjection,
   countStates,
+  projectionPreviewKeys,
+  removeKeysWithPrefix,
+  retainKeys,
   stateLabel,
+  validTime,
   visibleDashboardRows,
 } from "./dashboard-model";
 import { DirectoryStore } from "./directory-store";
@@ -150,7 +154,13 @@ function Actions({
             backgroundColor: theme.colors.accent,
           }}
         >
-          <Text style={{ color: theme.colors.accentForeground, textAlign: "center", fontWeight: "700" }}>
+          <Text
+            style={{
+              color: theme.colors.accentForeground,
+              textAlign: "center",
+              fontWeight: "700",
+            }}
+          >
             Open agent
           </Text>
         </Pressable>
@@ -191,8 +201,8 @@ function InteractiveCard({
   onTogglePreview: () => void;
 }) {
   const { agent, state } = group;
-  const hasInteraction = Boolean(agent.lastUserMessageAt && Number.isFinite(Date.parse(agent.lastUserMessageAt)));
-  const activityTime = hasInteraction ? agent.lastUserMessageAt! : agent.createdAt;
+  const hasInteraction = validTime(agent.lastUserMessageAt) !== null;
+  const hasCreationTime = validTime(agent.createdAt) !== null;
   return (
     <View
       style={{
@@ -223,7 +233,11 @@ function InteractiveCard({
       </View>
 
       <Text style={{ color: theme.colors.foregroundMuted }}>
-        {hasInteraction ? "Last interaction" : "Created"} {timeAgo(activityTime, now)}
+        {hasInteraction
+          ? `Last interaction ${timeAgo(agent.lastUserMessageAt!, now)}`
+          : hasCreationTime
+            ? `Created ${timeAgo(agent.createdAt, now)}`
+            : "Creation time unavailable"}
       </Text>
 
       {group.background.length > 0 ? (
@@ -275,7 +289,6 @@ function BackgroundRow({
   onTogglePreview: () => void;
 }) {
   const { agent, state } = item;
-  const role = /\breview(?:er)?\b/i.test(agent.title ?? "") ? "Review" : "Background";
   return (
     <View
       style={{
@@ -289,10 +302,16 @@ function BackgroundRow({
         backgroundColor: theme.colors.surface1,
       }}
     >
-      <View style={{ flexDirection: compact ? "column" : "row", justifyContent: "space-between", gap: 6 }}>
+      <View
+        style={{
+          flexDirection: compact ? "column" : "row",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
         <View style={{ minWidth: 0, flexShrink: 1 }}>
           <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>{titleFor(agent)}</Text>
-          <Text style={{ color: theme.colors.foregroundMuted }}>{role}</Text>
+          <Text style={{ color: theme.colors.foregroundMuted }}>Background</Text>
         </View>
         <Text style={{ color: stateColor(theme, state), fontWeight: "700" }}>{stateLabel(state)}</Text>
       </View>
@@ -333,16 +352,14 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
 
   const projection = useMemo(() => buildDashboardProjection(snapshot.agents), [snapshot.agents]);
   useEffect(() => {
-    const groups = new Set(projection.interactive.filter(({ background }) => background.length).map(({ agent }) => agent.id));
-    const validPreviewKeys = new Set([
-      ...projection.interactive.map(({ agent }) => `interactive:${agent.id}`),
-      ...projection.interactive.flatMap(({ agent, background }) =>
-        background.map(({ agent: item }) => `background:${agent.id}:${item.id}`),
-      ),
-      ...projection.otherBackground.map(({ agent }) => `other:${agent.id}`),
-    ]);
-    setExpandedGroups((current) => new Set([...current].filter((id) => groups.has(id))));
-    setPreviewKeys((current) => new Set([...current].filter((key) => validPreviewKeys.has(key))));
+    const groups = new Set(
+      projection.interactive
+        .filter(({ background }) => background.length)
+        .map(({ agent }) => agent.id),
+    );
+    const validPreviewKeys = projectionPreviewKeys(projection);
+    setExpandedGroups((current) => retainKeys(current, groups));
+    setPreviewKeys((current) => retainKeys(current, validPreviewKeys));
     if (projection.otherBackground.length === 0) setOtherExpanded(false);
   }, [projection]);
 
@@ -371,12 +388,12 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
     });
     if (closing) {
       const prefix = `background:${group.agent.id}:`;
-      setPreviewKeys((previews) => new Set([...previews].filter((key) => !key.startsWith(prefix))));
+      setPreviewKeys((previews) => removeKeysWithPrefix(previews, prefix));
     }
   };
   const toggleOther = () => {
     if (otherExpanded) {
-      setPreviewKeys((previews) => new Set([...previews].filter((key) => !key.startsWith("other:"))));
+      setPreviewKeys((previews) => removeKeysWithPrefix(previews, "other:"));
     }
     setOtherExpanded(!otherExpanded);
   };
@@ -450,21 +467,42 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
       ListHeaderComponent={
         <View style={{ gap: layout.compact ? 14 : 20, marginBottom: rows.length ? 12 : 0 }}>
           <View style={{ gap: 5 }}>
-            <Text style={{ color: theme.colors.foreground, fontSize: layout.compact ? 22 : 28, fontWeight: "800" }}>
+            <Text
+              style={{
+                color: theme.colors.foreground,
+                fontSize: layout.compact ? 22 : 28,
+                fontWeight: "800",
+              }}
+            >
               {workspace?.name || "Workspace"} dashboard
             </Text>
             <Text style={{ color: theme.colors.foregroundMuted }}>
-              {snapshot.agents.length} agents · {counts.working} working · {counts.needs_input} need input · {counts.failed} failed
+              {snapshot.agents.length} agents · {counts.working} working · {counts.needs_input}{" "}
+              need input · {counts.failed} failed
             </Text>
           </View>
 
           {snapshot.status === "error" ? (
-            <View style={{ gap: 10, padding: 14, borderRadius: 10, backgroundColor: theme.colors.surface1, borderWidth: 1, borderColor: theme.colors.statusDanger }}>
+            <View
+              style={{
+                gap: 10,
+                padding: 14,
+                borderRadius: 10,
+                backgroundColor: theme.colors.surface1,
+                borderWidth: 1,
+                borderColor: theme.colors.statusDanger,
+              }}
+            >
               <Text style={{ color: theme.colors.statusDanger, fontWeight: "700" }}>
                 {snapshot.agents.length ? "Live updates are disconnected" : "Dashboard disconnected"}
               </Text>
               <Text style={{ color: theme.colors.foreground }}>{snapshot.error}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel="Retry loading workspace agents" onPress={() => store.reload()} style={{ alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 12 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading workspace agents"
+                onPress={() => store.reload()}
+                style={{ alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 12 }}
+              >
                 <Text style={{ color: theme.colors.accent, fontWeight: "700" }}>Retry</Text>
               </Pressable>
             </View>
@@ -476,8 +514,12 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
 
           {snapshot.status === "ready" && snapshot.agents.length === 0 ? (
             <View style={{ padding: 20, gap: 6, borderRadius: 12, backgroundColor: theme.colors.surface1 }}>
-              <Text style={{ color: theme.colors.foreground, fontSize: 17, fontWeight: "700" }}>No agents in this workspace</Text>
-              <Text style={{ color: theme.colors.foregroundMuted }}>Agents appear here as soon as Paseo creates them.</Text>
+              <Text style={{ color: theme.colors.foreground, fontSize: 17, fontWeight: "700" }}>
+                No agents in this workspace
+              </Text>
+              <Text style={{ color: theme.colors.foregroundMuted }}>
+                Agents appear here as soon as Paseo creates them.
+              </Text>
             </View>
           ) : null}
         </View>
