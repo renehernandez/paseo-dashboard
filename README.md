@@ -61,7 +61,7 @@ pnpm run unit-test
 
 The native syntax test uses TypeScript's portable System-module emission at ES2016. This keeps unsupported class expressions visible while lowering async syntax. The test then compiles that JavaScript with the Hermes compiler supplied by the declared React Native version.
 
-This test guards the production state-owner modules on supported development and CI platforms. It does not reproduce Paseo's bundler. Compatibility verification also compiles the Paseo host-equivalent bundle separately. Browser integration, native parser compilation, and physical-device interaction are distinct checks.
+This test guards every production client module on supported development and CI platforms. It does not reproduce Paseo's bundler. Compatibility verification also compiles the Paseo host-equivalent bundle separately. Browser integration, native parser compilation, and physical-device interaction are distinct checks.
 
 Reload an installed local checkout after source changes:
 
