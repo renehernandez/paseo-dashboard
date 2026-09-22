@@ -25,8 +25,8 @@ import {
   toggleOther,
   togglePreview,
 } from "./dashboard-disclosure";
-import { DirectoryStore } from "./directory-store";
-import { PreviewSession, type PreviewSessionSnapshot } from "./timeline-preview";
+import { createDirectoryStore } from "./directory-store";
+import { createPreviewSession, type PreviewSessionSnapshot } from "./timeline-preview";
 
 const INITIAL_PREVIEW: PreviewSessionSnapshot = {
   status: "loading",
@@ -69,7 +69,7 @@ function Preview({
   const permission = agent.pendingPermissions.length > 0 || agent.attentionReason === "permission";
 
   useEffect(() => {
-    const session = new PreviewSession(paseo, agent.id, agent.status === "running", setSnapshot);
+    const session = createPreviewSession(paseo, agent.id, agent.status === "running", setSnapshot);
     return session.start();
   }, [agent.id, agent.status, paseo]);
 
@@ -338,7 +338,7 @@ function BackgroundRow({
 export function DashboardPanel({ theme, layout, workspaceId, navigation }: PluginWorkspacePanelProps) {
   const paseo = usePaseo();
   const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const store = useMemo(() => new DirectoryStore(paseo, workspaceId), [paseo, workspaceId]);
+  const store = useMemo(() => createDirectoryStore(paseo, workspaceId), [paseo, workspaceId]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => store.start(), [store]);
 

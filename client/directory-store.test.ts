@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DashboardAgent } from "./dashboard-model";
-import { type DashboardPaseo, DirectoryStore } from "./directory-store";
+import { type DashboardPaseo, createDirectoryStore } from "./directory-store";
 
 function agent(id: string, workspaceId = "workspace"): DashboardAgent {
   return {
@@ -28,7 +28,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe("DirectoryStore", () => {
+describe("createDirectoryStore", () => {
   it("reconciles updates received while the initial snapshot is loading", async () => {
     const firstPage = deferred<unknown>();
     let update: ((value: unknown) => void) | undefined;
@@ -42,7 +42,7 @@ describe("DirectoryStore", () => {
         }),
       },
     } as unknown as DashboardPaseo;
-    const store = new DirectoryStore(paseo, "workspace");
+    const store = createDirectoryStore(paseo, "workspace");
     const stop = store.start();
 
     update?.({ kind: "upsert", agent: agent("live") });
@@ -63,6 +63,41 @@ describe("DirectoryStore", () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it("keeps callbacks stable and state private to each instance", async () => {
+    const handlers: Array<(value: unknown) => void> = [];
+    const releases = [vi.fn(), vi.fn()];
+    const paseo = {
+      agents: {
+        list: vi.fn().mockResolvedValue({ entries: [], pageInfo: {} }),
+        subscribe: vi.fn((handler: (value: unknown) => void) => {
+          const index = handlers.push(handler) - 1;
+          return releases[index]!;
+        }),
+      },
+    } as unknown as DashboardPaseo;
+    const first = createDirectoryStore(paseo, "first");
+    const second = createDirectoryStore(paseo, "second");
+    const firstGetSnapshot = first.getSnapshot;
+    const firstSubscribe = first.subscribe;
+
+    first.start();
+    second.start();
+    await vi.waitFor(() => expect(first.getSnapshot().status).toBe("ready"));
+    await vi.waitFor(() => expect(second.getSnapshot().status).toBe("ready"));
+    handlers[0]?.({ kind: "upsert", agent: agent("one", "first") });
+
+    expect(first.getSnapshot).toBe(firstGetSnapshot);
+    expect(first.subscribe).toBe(firstSubscribe);
+    expect(first.getSnapshot().agents.map(({ id }) => id)).toEqual(["one"]);
+    expect(second.getSnapshot().agents).toEqual([]);
+
+    first.stop();
+    first.stop();
+    second.stop();
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(releases[1]).toHaveBeenCalledOnce();
+  });
+
   it("releases the previous subscription when restarted and preserves data on failure", async () => {
     const releases = [vi.fn(), vi.fn()];
     let call = 0;
@@ -75,7 +110,7 @@ describe("DirectoryStore", () => {
         subscribe: vi.fn(() => releases[call++]!),
       },
     } as unknown as DashboardPaseo;
-    const store = new DirectoryStore(paseo, "workspace");
+    const store = createDirectoryStore(paseo, "workspace");
 
     const cleanup = store.start();
     await vi.waitFor(() => expect(store.getSnapshot().status).toBe("ready"));
