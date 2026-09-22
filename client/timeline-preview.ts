@@ -69,83 +69,83 @@ export interface PreviewSessionSnapshot {
   readonly error: string | null;
 }
 
-export class PreviewSession {
-  private active = false;
-  private generation = 0;
-  private refreshInFlight = false;
-  private queuedGeneration: number | null = null;
-  private releaseTimeline: (() => void) | null = null;
+export function createPreviewSession(
+  paseo: DashboardPaseo,
+  agentId: string,
+  live: boolean,
+  publish: (snapshot: PreviewSessionSnapshot) => void,
+) {
+  let active = false;
+  let generation = 0;
+  let refreshInFlight = false;
+  let queuedGeneration: number | null = null;
+  let releaseTimeline: (() => void) | null = null;
 
-  constructor(
-    private readonly paseo: DashboardPaseo,
-    private readonly agentId: string,
-    private readonly live: boolean,
-    private readonly publish: (snapshot: PreviewSessionSnapshot) => void,
-  ) {}
-
-  start(): () => void {
-    this.stop();
-    this.active = true;
-    const generation = this.generation;
-    this.publish({ status: "loading", preview: null, error: null });
-    if (this.live) {
-      this.releaseTimeline = this.paseo.agents.ref(this.agentId).timeline.subscribe(({ event }) => {
-        if (event.type === "timeline" || event.type === "replacement") {
-          this.requestRefresh(generation);
-        }
-      });
-      void subscriptionReady(this.releaseTimeline)?.catch((error: unknown) => {
-        if (this.active && generation === this.generation) this.publishError(error);
-      });
-    }
-    this.requestRefresh(generation);
-    return () => this.stop();
-  }
-
-  stop(): void {
-    this.active = false;
-    this.generation += 1;
-    this.queuedGeneration = null;
-    this.releaseTimeline?.();
-    this.releaseTimeline = null;
-  }
-
-  private requestRefresh(generation: number): void {
-    if (!this.active || generation !== this.generation) return;
-    if (this.refreshInFlight) {
-      this.queuedGeneration = generation;
-      return;
-    }
-
-    this.refreshInFlight = true;
-    void this.refresh(generation).finally(() => {
-      this.refreshInFlight = false;
-      const queuedGeneration = this.queuedGeneration;
-      this.queuedGeneration = null;
-      if (queuedGeneration === this.generation) this.requestRefresh(queuedGeneration);
-    });
-  }
-
-  private async refresh(generation: number): Promise<void> {
-    try {
-      const result = await this.paseo.agents.ref(this.agentId).timeline.refetch({
-        direction: "tail",
-        limit: 12,
-        projection: "projected",
-      });
-      if (!this.active || generation !== this.generation) return;
-      if (result.error) throw new Error(result.error);
-      this.publish({ status: "ready", preview: summarizeTimeline(result.entries), error: null });
-    } catch (error) {
-      if (this.active && generation === this.generation) this.publishError(error);
-    }
-  }
-
-  private publishError(error: unknown): void {
-    this.publish({
+  const publishError = (error: unknown): void => {
+    publish({
       status: "error",
       preview: null,
       error: error instanceof Error ? error.message : "Could not load recent activity",
     });
-  }
+  };
+
+  const refresh = async (refreshGeneration: number): Promise<void> => {
+    try {
+      const result = await paseo.agents.ref(agentId).timeline.refetch({
+        direction: "tail",
+        limit: 12,
+        projection: "projected",
+      });
+      if (!active || refreshGeneration !== generation) return;
+      if (result.error) throw new Error(result.error);
+      publish({ status: "ready", preview: summarizeTimeline(result.entries), error: null });
+    } catch (error) {
+      if (active && refreshGeneration === generation) publishError(error);
+    }
+  };
+
+  const requestRefresh = (refreshGeneration: number): void => {
+    if (!active || refreshGeneration !== generation) return;
+    if (refreshInFlight) {
+      queuedGeneration = refreshGeneration;
+      return;
+    }
+
+    refreshInFlight = true;
+    void refresh(refreshGeneration).finally(() => {
+      refreshInFlight = false;
+      const queued = queuedGeneration;
+      queuedGeneration = null;
+      if (queued === generation) requestRefresh(queued);
+    });
+  };
+
+  const stop = (): void => {
+    active = false;
+    generation += 1;
+    queuedGeneration = null;
+    releaseTimeline?.();
+    releaseTimeline = null;
+  };
+
+  const start = (): (() => void) => {
+    stop();
+    active = true;
+    const startGeneration = generation;
+    publish({ status: "loading", preview: null, error: null });
+    if (live) {
+      releaseTimeline = paseo.agents.ref(agentId).timeline.subscribe(({ event }) => {
+        if (event.type === "timeline" || event.type === "replacement") {
+          requestRefresh(startGeneration);
+        }
+      });
+      void subscriptionReady(releaseTimeline)?.catch((error: unknown) => {
+        if (active && startGeneration === generation) publishError(error);
+      });
+    }
+    requestRefresh(startGeneration);
+    return stop;
+  };
+
+  return { start, stop };
 }

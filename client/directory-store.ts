@@ -14,107 +14,104 @@ export interface DirectorySnapshot {
 
 const INITIAL_SNAPSHOT: DirectorySnapshot = { status: "loading", agents: [], error: null };
 
-export class DirectoryStore {
-  private snapshot: DirectorySnapshot = INITIAL_SNAPSHOT;
-  private readonly listeners = new Set<() => void>();
-  private stopCurrent: (() => void) | null = null;
+export function createDirectoryStore(paseo: DashboardPaseo, workspaceId: string) {
+  let snapshot: DirectorySnapshot = INITIAL_SNAPSHOT;
+  const listeners = new Set<() => void>();
+  let stopCurrent: (() => void) | null = null;
 
-  constructor(
-    private readonly paseo: DashboardPaseo,
-    private readonly workspaceId: string,
-  ) {}
+  const getSnapshot = (): DirectorySnapshot => snapshot;
 
-  readonly getSnapshot = (): DirectorySnapshot => this.snapshot;
-
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+  const subscribe = (listener: () => void): (() => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
   };
 
-  start(): () => void {
-    this.stopCurrent?.();
-    let active = true;
-    const pending: AgentUpdate[] = [];
-    let loading = true;
+  const publish = (nextSnapshot: DirectorySnapshot): void => {
+    snapshot = nextSnapshot;
+    for (const listener of listeners) listener();
+  };
 
-    this.publish({ status: "loading", agents: this.snapshot.agents, error: null });
-    const unsubscribe = this.paseo.agents.subscribe((update) => {
-      if (!active) return;
-      if (loading) {
-        pending.push(update);
-        return;
-      }
-      this.apply(update);
-    });
+  const apply = (update: AgentUpdate): void => {
+    const byId = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
+    if (update.kind === "remove") {
+      byId.delete(update.agentId);
+    } else if (update.agent.workspaceId === workspaceId) {
+      byId.set(update.agent.id, update.agent);
+    } else {
+      byId.delete(update.agent.id);
+    }
+    publish({ status: "ready", agents: [...byId.values()], error: null });
+  };
 
-    void this.load()
-      .then((agents) => {
-        if (!active) return;
-        this.publish({ status: "ready", agents, error: null });
-        loading = false;
-        for (const update of pending) this.apply(update);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        loading = false;
-        this.publish({
-          status: "error",
-          agents: this.snapshot.agents,
-          error: error instanceof Error ? error.message : "Could not load the agent directory",
-        });
-      });
-
-    const stop = () => {
-      if (!active) return;
-      active = false;
-      unsubscribe();
-      if (this.stopCurrent === stop) this.stopCurrent = null;
-    };
-    this.stopCurrent = stop;
-    return () => this.stop();
-  }
-
-  reload(): void {
-    this.start();
-  }
-
-  stop(): void {
-    this.stopCurrent?.();
-  }
-
-  private async load(): Promise<DashboardAgent[]> {
+  const load = async (): Promise<DashboardAgent[]> => {
     const agents: DashboardAgent[] = [];
     let cursor: string | undefined;
     let first = true;
     do {
-      const result = await this.paseo.agents.list({
+      const result = await paseo.agents.list({
         scope: "active",
         page: { limit: 200, ...(cursor ? { cursor } : {}) },
         ...(first ? { subscribe: {} } : {}),
       });
       for (const { agent } of result.entries) {
-        if (agent.workspaceId === this.workspaceId) agents.push(agent);
+        if (agent.workspaceId === workspaceId) agents.push(agent);
       }
       cursor = result.pageInfo.nextCursor ?? undefined;
       first = false;
     } while (cursor);
     return agents;
-  }
+  };
 
-  private apply(update: AgentUpdate): void {
-    const byId = new Map(this.snapshot.agents.map((agent) => [agent.id, agent]));
-    if (update.kind === "remove") {
-      byId.delete(update.agentId);
-    } else if (update.agent.workspaceId === this.workspaceId) {
-      byId.set(update.agent.id, update.agent);
-    } else {
-      byId.delete(update.agent.id);
-    }
-    this.publish({ status: "ready", agents: [...byId.values()], error: null });
-  }
+  const stop = (): void => {
+    stopCurrent?.();
+  };
 
-  private publish(snapshot: DirectorySnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener();
-  }
+  const start = (): (() => void) => {
+    stop();
+    let active = true;
+    const pending: AgentUpdate[] = [];
+    let loading = true;
+
+    publish({ status: "loading", agents: snapshot.agents, error: null });
+    const unsubscribe = paseo.agents.subscribe((update) => {
+      if (!active) return;
+      if (loading) {
+        pending.push(update);
+        return;
+      }
+      apply(update);
+    });
+
+    void load()
+      .then((agents) => {
+        if (!active) return;
+        publish({ status: "ready", agents, error: null });
+        loading = false;
+        for (const update of pending) apply(update);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        loading = false;
+        publish({
+          status: "error",
+          agents: snapshot.agents,
+          error: error instanceof Error ? error.message : "Could not load the agent directory",
+        });
+      });
+
+    const stopSubscription = () => {
+      if (!active) return;
+      active = false;
+      unsubscribe();
+      if (stopCurrent === stopSubscription) stopCurrent = null;
+    };
+    stopCurrent = stopSubscription;
+    return stop;
+  };
+
+  const reload = (): void => {
+    start();
+  };
+
+  return { getSnapshot, subscribe, start, reload, stop };
 }

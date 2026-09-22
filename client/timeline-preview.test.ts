@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DashboardPaseo } from "./directory-store";
-import { PreviewSession, summarizeTimeline } from "./timeline-preview";
+import { createPreviewSession, summarizeTimeline } from "./timeline-preview";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -52,7 +52,7 @@ describe("timeline previews", () => {
       },
     } as unknown as DashboardPaseo;
     const publish = vi.fn();
-    const session = new PreviewSession(paseo, "agent", true, publish);
+    const session = createPreviewSession(paseo, "agent", true, publish);
     session.start();
 
     ready.reject(new Error("subscription failed"));
@@ -86,7 +86,7 @@ describe("timeline previews", () => {
         }),
       },
     } as unknown as DashboardPaseo;
-    const session = new PreviewSession(paseo, "agent", true, vi.fn());
+    const session = createPreviewSession(paseo, "agent", true, vi.fn());
     session.start();
 
     onTimeline?.({ event: { type: "usage_updated" } });
@@ -123,7 +123,7 @@ describe("timeline previews", () => {
       },
     } as unknown as DashboardPaseo;
     const publish = vi.fn();
-    const session = new PreviewSession(paseo, "agent", true, publish);
+    const session = createPreviewSession(paseo, "agent", true, publish);
     const stop = session.start();
 
     first.resolve({ entries: [], error: null });

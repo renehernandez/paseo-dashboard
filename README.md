@@ -57,7 +57,11 @@ pnpm run typecheck
 pnpm run unit-test
 ```
 
-`pnpm run typecheck` validates the client-only source against `@getpaseo/plugin` 0.8.0. `pnpm run unit-test` covers interactive ordering, recursive ownership and status summaries, orphan retention, visible-row disclosure, directory reconciliation, bounded preview summaries, and subscription release.
+`pnpm run typecheck` validates the client-only source against `@getpaseo/plugin` 0.8.0. `pnpm run unit-test` covers interactive ordering, recursive ownership and status summaries, orphan retention, visible-row disclosure, directory reconciliation, bounded preview summaries, subscription release, and native Hermes syntax.
+
+The native syntax test uses TypeScript's portable System-module emission at ES2016. This keeps unsupported class expressions visible while lowering async syntax. The test then compiles that JavaScript with the Hermes compiler supplied by the declared React Native version.
+
+This test guards every production client module on supported development and CI platforms. It does not reproduce Paseo's bundler. Compatibility verification also compiles the Paseo host-equivalent bundle separately. Browser integration, native parser compilation, and physical-device interaction are distinct checks.
 
 Reload an installed local checkout after source changes:
 
@@ -73,7 +77,7 @@ Paseo Dashboard v1 does not answer permission requests, send prompts, create or 
 
 ## Compatibility
 
-The UI uses React Native components and Paseo theme tokens for web, iOS, and Android clients. Compact browser behavior is part of v1 verification. Physical iOS and Android interaction remains a documented post-v1 verification gap.
+The UI uses React Native components and Paseo theme tokens for web, iOS, and Android clients. Wide and compact browser behavior and native Hermes parser compatibility are automated separately. Physical iOS and Android interaction still requires a connected device or emulator and must not be inferred from either automated check.
 
 ## License
 
