@@ -17,24 +17,39 @@ export interface DashboardAgent {
   readonly labels: Readonly<Record<string, string>>;
 }
 
-export type DashboardState = "needs_input" | "failed" | "attention" | "working" | "done";
+export type DashboardState = "needs_input" | "failed" | "working" | "done";
 
-export interface AgentNode {
+export interface BackgroundAgent {
   readonly agent: DashboardAgent;
-  readonly parentAgentId: string | null;
-  readonly children: readonly AgentNode[];
+  readonly parentTitle: string | null;
   readonly state: DashboardState;
-  readonly aggregateState: DashboardState;
 }
+
+export interface InteractiveAgent {
+  readonly agent: DashboardAgent;
+  readonly state: DashboardState;
+  readonly background: readonly BackgroundAgent[];
+  readonly counts: Readonly<Record<DashboardState, number>>;
+}
+
+export interface DashboardProjection {
+  readonly interactive: readonly InteractiveAgent[];
+  readonly otherBackground: readonly BackgroundAgent[];
+}
+
+export type DashboardRow =
+  | { readonly kind: "interactive"; readonly group: InteractiveAgent }
+  | { readonly kind: "background"; readonly item: BackgroundAgent; readonly ownerId: string }
+  | { readonly kind: "other_header"; readonly count: number }
+  | { readonly kind: "other_background"; readonly item: BackgroundAgent };
 
 const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
 
-const STATE_PRIORITY: Readonly<Record<DashboardState, number>> = {
+const EMPTY_COUNTS: Readonly<Record<DashboardState, number>> = {
   needs_input: 0,
-  failed: 1,
-  attention: 2,
-  working: 3,
-  done: 4,
+  failed: 0,
+  working: 0,
+  done: 0,
 };
 
 export function parentAgentId(agent: DashboardAgent): string | null {
@@ -49,7 +64,6 @@ export function agentState(agent: DashboardAgent): DashboardState {
   if (agent.status === "error" || agent.lastError || agent.attentionReason === "error") {
     return "failed";
   }
-  if (agent.requiresAttention) return "attention";
   if (agent.status === "running" || agent.status === "initializing") return "working";
   return "done";
 }
@@ -60,8 +74,6 @@ export function stateLabel(state: DashboardState): string {
       return "Needs input";
     case "failed":
       return "Failed";
-    case "attention":
-      return "Attention";
     case "working":
       return "Working";
     case "done":
@@ -69,76 +81,146 @@ export function stateLabel(state: DashboardState): string {
   }
 }
 
-function compareCreated(left: DashboardAgent, right: DashboardAgent): number {
-  const created = left.createdAt.localeCompare(right.createdAt);
-  return created || left.id.localeCompare(right.id);
+export function validTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-export function buildAgentHierarchy(agents: readonly DashboardAgent[]): readonly AgentNode[] {
+function compareCreated(left: DashboardAgent, right: DashboardAgent): number {
+  const difference = (validTime(left.createdAt) ?? 0) - (validTime(right.createdAt) ?? 0);
+  return difference || left.id.localeCompare(right.id);
+}
+
+function compareInteractive(left: DashboardAgent, right: DashboardAgent): number {
+  const leftTime = validTime(left.lastUserMessageAt) ?? validTime(left.createdAt) ?? 0;
+  const rightTime = validTime(right.lastUserMessageAt) ?? validTime(right.createdAt) ?? 0;
+  return rightTime - leftTime || left.id.localeCompare(right.id);
+}
+
+function compareActivity(left: DashboardAgent, right: DashboardAgent): number {
+  const leftTime = validTime(left.updatedAt) ?? validTime(left.createdAt) ?? 0;
+  const rightTime = validTime(right.updatedAt) ?? validTime(right.createdAt) ?? 0;
+  return rightTime - leftTime || left.id.localeCompare(right.id);
+}
+
+function interactiveAncestor(
+  agent: DashboardAgent,
+  byId: ReadonlyMap<string, DashboardAgent>,
+): DashboardAgent | null {
+  const seen = new Set([agent.id]);
+  let parentId = parentAgentId(agent);
+  while (parentId) {
+    if (seen.has(parentId)) return null;
+    seen.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) return null;
+    if (!parentAgentId(parent)) return parent;
+    parentId = parentAgentId(parent);
+  }
+  return null;
+}
+
+function backgroundItem(
+  agent: DashboardAgent,
+  byId: ReadonlyMap<string, DashboardAgent>,
+): BackgroundAgent {
+  const parentId = parentAgentId(agent);
+  return {
+    agent,
+    parentTitle: parentId ? byId.get(parentId)?.title?.trim() || parentId : null,
+    state: agentState(agent),
+  };
+}
+
+export function countStates(
+  agents: readonly DashboardAgent[],
+): Readonly<Record<DashboardState, number>> {
+  const counts = { ...EMPTY_COUNTS };
+  for (const agent of agents) counts[agentState(agent)] += 1;
+  return counts;
+}
+
+export function buildDashboardProjection(
+  agents: readonly DashboardAgent[],
+): DashboardProjection {
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const childrenByParent = new Map<string, DashboardAgent[]>();
-  const roots: DashboardAgent[] = [];
+  const interactiveAgents = agents.filter((agent) => !parentAgentId(agent));
+  const grouped = new Map(interactiveAgents.map((agent) => [agent.id, [] as DashboardAgent[]]));
+  const other: DashboardAgent[] = [];
 
   for (const agent of agents) {
+    if (!parentAgentId(agent)) continue;
+    const ancestor = interactiveAncestor(agent, byId);
+    const group = ancestor ? grouped.get(ancestor.id) : undefined;
+    if (group) group.push(agent);
+    else other.push(agent);
+  }
+
+  const childrenByParent = new Map<string, DashboardAgent[]>();
+  for (const agent of agents) {
     const parentId = parentAgentId(agent);
-    if (!parentId || parentId === agent.id || !byId.has(parentId)) {
-      roots.push(agent);
-      continue;
-    }
+    if (!parentId) continue;
     const children = childrenByParent.get(parentId) ?? [];
     children.push(agent);
     childrenByParent.set(parentId, children);
   }
 
-  const visited = new Set<string>();
-  const makeNode = (agent: DashboardAgent, ancestors: ReadonlySet<string>): AgentNode => {
-    visited.add(agent.id);
-    const nextAncestors = new Set(ancestors).add(agent.id);
-    const children = (childrenByParent.get(agent.id) ?? [])
-      .filter((child) => !nextAncestors.has(child.id))
-      .sort(compareCreated)
-      .map((child) => makeNode(child, nextAncestors));
-    const state = agentState(agent);
-    const aggregateState = children.reduce(
-      (current, child) =>
-        STATE_PRIORITY[child.aggregateState] < STATE_PRIORITY[current]
-          ? child.aggregateState
-          : current,
-      state,
-    );
-    return { agent, parentAgentId: parentAgentId(agent), children, state, aggregateState };
+  const orderedBackground = (root: DashboardAgent, members: readonly DashboardAgent[]) => {
+    const memberIds = new Set(members.map(({ id }) => id));
+    const ordered: DashboardAgent[] = [];
+    const visit = (parentId: string) => {
+      for (const child of [...(childrenByParent.get(parentId) ?? [])].sort(compareCreated)) {
+        if (!memberIds.has(child.id)) continue;
+        ordered.push(child);
+        visit(child.id);
+      }
+    };
+    visit(root.id);
+    return ordered;
   };
 
-  const result = roots.sort(compareCreated).map((agent) => makeNode(agent, new Set()));
-  for (const agent of [...agents].sort(compareCreated)) {
-    if (!visited.has(agent.id)) result.push(makeNode(agent, new Set()));
+  return {
+    interactive: interactiveAgents.sort(compareInteractive).map((agent) => {
+      const background = orderedBackground(agent, grouped.get(agent.id) ?? []).map((item) =>
+        backgroundItem(item, byId),
+      );
+      return {
+        agent,
+        state: agentState(agent),
+        background,
+        counts: countStates(background.map(({ agent: item }) => item)),
+      };
+    }),
+    otherBackground: other.sort(compareActivity).map((agent) => backgroundItem(agent, byId)),
+  };
+}
+
+export function visibleDashboardRows(
+  projection: DashboardProjection,
+  expandedGroups: ReadonlySet<string>,
+  otherExpanded: boolean,
+): readonly DashboardRow[] {
+  const rows: DashboardRow[] = [];
+  for (const group of projection.interactive) {
+    rows.push({ kind: "interactive", group });
+    if (expandedGroups.has(group.agent.id)) {
+      rows.push(
+        ...group.background.map((item) => ({
+          kind: "background" as const,
+          item,
+          ownerId: group.agent.id,
+        })),
+      );
+    }
   }
-  return result;
-}
-
-export interface AttentionItem {
-  readonly agent: DashboardAgent;
-  readonly state: DashboardState;
-}
-
-export function orderByAttention(agents: readonly DashboardAgent[]): readonly AttentionItem[] {
-  return agents
-    .map((agent) => ({ agent, state: agentState(agent) }))
-    .sort(
-      (left, right) =>
-        STATE_PRIORITY[left.state] - STATE_PRIORITY[right.state] ||
-        compareCreated(left.agent, right.agent),
-    );
-}
-
-export function countStates(agents: readonly DashboardAgent[]): Readonly<Record<DashboardState, number>> {
-  const counts: Record<DashboardState, number> = {
-    needs_input: 0,
-    failed: 0,
-    attention: 0,
-    working: 0,
-    done: 0,
-  };
-  for (const agent of agents) counts[agentState(agent)] += 1;
-  return counts;
+  if (projection.otherBackground.length > 0) {
+    rows.push({ kind: "other_header", count: projection.otherBackground.length });
+    if (otherExpanded) {
+      rows.push(
+        ...projection.otherBackground.map((item) => ({ kind: "other_background" as const, item })),
+      );
+    }
+  }
+  return rows;
 }

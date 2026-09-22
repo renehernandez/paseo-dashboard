@@ -1,12 +1,12 @@
 # Paseo Dashboard
 
-Paseo Dashboard is a client-only [Paseo](https://paseo.sh) plugin for monitoring one workspace. It highlights agents that need input, failed agents, active work, and completed work in a responsive native panel.
+Paseo Dashboard is a client-only [Paseo](https://paseo.sh) plugin for monitoring one workspace. It makes the agents you work with the primary workspace objects while keeping their background work close at hand in a responsive native panel.
 
 ## Features
 
 - Live workspace agent directory updates
-- Root-agent and subagent hierarchy
-- Attention-first status ordering with text labels
+- Interaction-ordered agent cards with recursive background summaries
+- Collapsible background rows with orphan and cycle retention
 - Bounded, demand-loaded timeline previews with coalesced live refreshes
 - Direct navigation to the full Paseo agent view when the host supports it
 - Wide and compact React Native layouts
@@ -39,15 +39,11 @@ Open a workspace, launch the Command Center, and select **Open workspace dashboa
 
 ## Use the dashboard
 
-The summary reports the number of working, needs-input, and failed agents. The attention strip orders agents by required action:
+The summary reports the number of working, needs-input, and failed agents. **Your agent** cards are agents without a parent label, ordered by their latest user interaction with creation time as a fallback. Background activity does not reorder them.
 
-1. Pending permission
-2. Error or failed state
-3. Explicit attention
-4. Running work
-5. Done work
+Each card summarizes all recursively owned background agents while collapsed. Expand the summary to show dense background rows with their status, activity, and parent context. Missing-parent, self-linked, and cyclic agents remain available under the collapsed **Other background agents** section instead of disappearing.
 
-The hierarchy derives parent relationships from Paseo's agent directory, orders siblings by creation time, and uses a virtualized list so large workspaces do not eagerly mount every card. Select **Show recent activity** to fetch a bounded timeline tail. A mounted running preview observes relevant live events, permits one timeline refetch at a time, and coalesces bursts until you hide it or leave the panel. Preview errors do not remove the agent card or its **Open agent** action.
+Permission requests and failures remain actionable. Running work stays **Working**; a finished or generic attention flag does not create a separate state and resolves from the agent lifecycle instead. Select **Show recent activity** on an individual row to fetch its bounded timeline tail. Expanding a background group alone does not request timelines. A mounted running preview observes relevant live events, permits one timeline refetch at a time, and coalesces bursts until you hide it, collapse its group, or leave the panel. Preview errors do not remove the row or its **Open agent** action.
 
 Older Paseo clients that do not provide plugin navigation omit **Open agent** and show an explanatory message.
 
@@ -61,7 +57,7 @@ pnpm run typecheck
 pnpm run unit-test
 ```
 
-`pnpm run typecheck` validates the client-only source against `@getpaseo/plugin` 0.8.0. `pnpm run unit-test` covers hierarchy, state ordering, directory reconciliation, bounded preview summaries, and subscription release.
+`pnpm run typecheck` validates the client-only source against `@getpaseo/plugin` 0.8.0. `pnpm run unit-test` covers interactive ordering, recursive ownership and status summaries, orphan retention, visible-row disclosure, directory reconciliation, bounded preview summaries, and subscription release.
 
 Reload an installed local checkout after source changes:
 
