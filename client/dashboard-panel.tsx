@@ -14,9 +14,6 @@ import {
   type InteractiveAgent,
   buildDashboardProjection,
   countStates,
-  projectionPreviewKeys,
-  removeKeysWithPrefix,
-  retainKeys,
   stateLabel,
   validTime,
   visibleDashboardRows,
@@ -43,6 +40,16 @@ function timeAgo(timestamp: string, now: number): string {
 
 function titleFor(agent: DashboardAgent): string {
   return agent.title?.trim() || `Agent ${agent.id.slice(0, 8)}`;
+}
+
+function retainKeys(current: ReadonlySet<string>, valid: ReadonlySet<string>) {
+  const next = new Set([...current].filter((key) => valid.has(key)));
+  return next.size === current.size ? current : next;
+}
+
+function removeKeysWithPrefix(current: ReadonlySet<string>, prefix: string) {
+  const next = new Set([...current].filter((key) => !key.startsWith(prefix)));
+  return next.size === current.size ? current : next;
 }
 
 function stateColor(theme: PluginTheme, state: DashboardState): string {
@@ -108,60 +115,53 @@ function Preview({
   );
 }
 
+interface ActionsProps {
+  agent: DashboardAgent;
+  previewExpanded: boolean;
+  onTogglePreview: () => void;
+  onOpen?: (agentId: string) => void;
+  dense?: boolean;
+  theme: PluginTheme;
+}
+
 function Actions({
   agent,
   previewExpanded,
   onTogglePreview,
   onOpen,
-  compact,
+  dense = false,
   theme,
-}: {
-  agent: DashboardAgent;
-  previewExpanded: boolean;
-  onTogglePreview: () => void;
-  onOpen?: (agentId: string) => void;
-  compact: boolean;
-  theme: PluginTheme;
-}) {
+}: ActionsProps) {
   const title = titleFor(agent);
+  let activityLabel = previewExpanded ? "Hide recent activity" : "Show recent activity";
+  if (dense) activityLabel = previewExpanded ? "Hide activity" : "Activity";
+  const button = {
+    minHeight: 40,
+    justifyContent: "center" as const,
+    paddingHorizontal: dense ? 10 : 12,
+    paddingVertical: dense ? 7 : 9,
+    borderRadius: 8,
+  };
   return (
-    <View style={{ flexDirection: compact ? "column" : "row", gap: 8 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: dense ? 6 : 8 }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${previewExpanded ? "Hide" : "Show"} recent activity for ${title}`}
         accessibilityState={{ expanded: previewExpanded }}
         onPress={onTogglePreview}
-        style={{
-          paddingHorizontal: 12,
-          paddingVertical: 9,
-          borderRadius: 8,
-          backgroundColor: theme.colors.surface2,
-        }}
+        style={[button, { backgroundColor: theme.colors.surface2 }]}
       >
-        <Text style={{ color: theme.colors.foreground, textAlign: "center", fontWeight: "600" }}>
-          {previewExpanded ? "Hide recent activity" : "Show recent activity"}
-        </Text>
+        <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>{activityLabel}</Text>
       </Pressable>
       {onOpen ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Open ${title}`}
           onPress={() => onOpen(agent.id)}
-          style={{
-            paddingHorizontal: 12,
-            paddingVertical: 9,
-            borderRadius: 8,
-            backgroundColor: theme.colors.accent,
-          }}
+          style={[button, { backgroundColor: theme.colors.accent }]}
         >
-          <Text
-            style={{
-              color: theme.colors.accentForeground,
-              textAlign: "center",
-              fontWeight: "700",
-            }}
-          >
-            Open agent
+          <Text style={{ color: theme.colors.accentForeground, fontWeight: "700" }}>
+            {dense ? "Open" : "Open agent"}
           </Text>
         </Pressable>
       ) : null}
@@ -177,6 +177,22 @@ function summary(group: InteractiveAgent): string {
   return [`${count} background agent${count === 1 ? "" : "s"}`, ...parts].join(" · ");
 }
 
+interface RowContext {
+  compact: boolean;
+  theme: PluginTheme;
+  paseo: ReturnType<typeof usePaseo>;
+  onOpen?: (agentId: string) => void;
+  now: number;
+  previewExpanded: boolean;
+  onTogglePreview: () => void;
+}
+
+interface InteractiveCardProps extends RowContext {
+  group: InteractiveAgent;
+  groupExpanded: boolean;
+  onToggleGroup: () => void;
+}
+
 function InteractiveCard({
   group,
   compact,
@@ -188,18 +204,7 @@ function InteractiveCard({
   previewExpanded,
   onToggleGroup,
   onTogglePreview,
-}: {
-  group: InteractiveAgent;
-  compact: boolean;
-  theme: PluginTheme;
-  paseo: ReturnType<typeof usePaseo>;
-  onOpen?: (agentId: string) => void;
-  now: number;
-  groupExpanded: boolean;
-  previewExpanded: boolean;
-  onToggleGroup: () => void;
-  onTogglePreview: () => void;
-}) {
+}: InteractiveCardProps) {
   const { agent, state } = group;
   const hasInteraction = validTime(agent.lastUserMessageAt) !== null;
   const hasCreationTime = validTime(agent.createdAt) !== null;
@@ -243,7 +248,7 @@ function InteractiveCard({
       {group.background.length > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${groupExpanded ? "Hide" : "Show"} background agents for ${titleFor(agent)}`}
+          accessibilityLabel={`${groupExpanded ? "Hide" : "Show"} background agents for ${titleFor(agent)}. ${summary(group)}`}
           accessibilityState={{ expanded: groupExpanded }}
           onPress={onToggleGroup}
           style={{ alignSelf: "flex-start", paddingVertical: 4 }}
@@ -262,11 +267,14 @@ function InteractiveCard({
         previewExpanded={previewExpanded}
         onTogglePreview={onTogglePreview}
         onOpen={onOpen}
-        compact={compact}
         theme={theme}
       />
     </View>
   );
+}
+
+interface BackgroundRowProps extends RowContext {
+  item: BackgroundAgent;
 }
 
 function BackgroundRow({
@@ -278,58 +286,53 @@ function BackgroundRow({
   now,
   previewExpanded,
   onTogglePreview,
-}: {
-  item: BackgroundAgent;
-  compact: boolean;
-  theme: PluginTheme;
-  paseo: ReturnType<typeof usePaseo>;
-  onOpen?: (agentId: string) => void;
-  now: number;
-  previewExpanded: boolean;
-  onTogglePreview: () => void;
-}) {
+}: BackgroundRowProps) {
   const { agent, state } = item;
+  const activity = validTime(agent.updatedAt)
+    ? `Updated ${timeAgo(agent.updatedAt, now)}`
+    : validTime(agent.createdAt)
+      ? `Created ${timeAgo(agent.createdAt, now)}`
+      : "Activity time unavailable";
+  const context = item.parentTitle ? ` · Parent: ${item.parentTitle}` : "";
   return (
     <View
       style={{
         minWidth: 0,
-        gap: 8,
-        padding: compact ? 10 : 12,
-        marginLeft: compact ? 8 : 18,
+        gap: 6,
+        padding: compact ? 8 : 10,
+        marginLeft: compact ? 6 : 18,
         borderLeftWidth: 3,
         borderLeftColor: stateColor(theme, state),
         borderRadius: 8,
         backgroundColor: theme.colors.surface1,
       }}
     >
-      <View
-        style={{
-          flexDirection: compact ? "column" : "row",
-          justifyContent: "space-between",
-          gap: 6,
-        }}
-      >
-        <View style={{ minWidth: 0, flexShrink: 1 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+        <View
+          style={{
+            minWidth: 0,
+            flexGrow: 1,
+            flexShrink: 1,
+            flexBasis: compact ? "100%" : 220,
+          }}
+        >
           <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>{titleFor(agent)}</Text>
-          <Text style={{ color: theme.colors.foregroundMuted }}>Background</Text>
+          <Text style={{ color: theme.colors.foregroundMuted }} numberOfLines={2}>
+            Background · {activity}
+            {context}
+          </Text>
         </View>
         <Text style={{ color: stateColor(theme, state), fontWeight: "700" }}>{stateLabel(state)}</Text>
+        <Actions
+          agent={agent}
+          previewExpanded={previewExpanded}
+          onTogglePreview={onTogglePreview}
+          onOpen={onOpen}
+          dense
+          theme={theme}
+        />
       </View>
-      <Text style={{ color: theme.colors.foregroundMuted }}>Updated {timeAgo(agent.updatedAt, now)}</Text>
-      {item.parentTitle ? (
-        <Text style={{ color: theme.colors.foregroundMuted }} numberOfLines={2}>
-          Parent: {item.parentTitle}
-        </Text>
-      ) : null}
       {previewExpanded ? <Preview paseo={paseo} agent={agent} theme={theme} /> : null}
-      <Actions
-        agent={agent}
-        previewExpanded={previewExpanded}
-        onTogglePreview={onTogglePreview}
-        onOpen={onOpen}
-        compact={compact}
-        theme={theme}
-      />
     </View>
   );
 }
@@ -357,7 +360,13 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
         .filter(({ background }) => background.length)
         .map(({ agent }) => agent.id),
     );
-    const validPreviewKeys = projectionPreviewKeys(projection);
+    const validPreviewKeys = new Set([
+      ...projection.interactive.map(({ agent }) => `interactive:${agent.id}`),
+      ...projection.interactive.flatMap(({ agent, background }) =>
+        background.map(({ agent: item }) => `background:${agent.id}:${item.id}`),
+      ),
+      ...projection.otherBackground.map(({ agent }) => `other:${agent.id}`),
+    ]);
     setExpandedGroups((current) => retainKeys(current, groups));
     setPreviewKeys((current) => retainKeys(current, validPreviewKeys));
     if (projection.otherBackground.length === 0) setOtherExpanded(false);
@@ -370,14 +379,13 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
   const counts = useMemo(() => countStates(snapshot.agents), [snapshot.agents]);
   const openAgent = navigation ? (agentId: string) => navigation.openAgent({ agentId }) : undefined;
 
-  const togglePreview = (key: string) => {
+  const togglePreview = (key: string) =>
     setPreviewKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  };
   const toggleGroup = (group: InteractiveAgent) => {
     const closing = expandedGroups.has(group.agent.id);
     setExpandedGroups((current) => {
@@ -387,8 +395,9 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
       return next;
     });
     if (closing) {
-      const prefix = `background:${group.agent.id}:`;
-      setPreviewKeys((previews) => removeKeysWithPrefix(previews, prefix));
+      setPreviewKeys((previews) =>
+        removeKeysWithPrefix(previews, `background:${group.agent.id}:`),
+      );
     }
   };
   const toggleOther = () => {
