@@ -21,7 +21,6 @@ export type DashboardState = "needs_input" | "failed" | "working" | "done";
 
 export interface BackgroundAgent {
   readonly agent: DashboardAgent;
-  readonly parentAgentId: string | null;
   readonly parentTitle: string | null;
   readonly state: DashboardState;
 }
@@ -129,7 +128,6 @@ function backgroundItem(
   const parentId = parentAgentId(agent);
   return {
     agent,
-    parentAgentId: parentId,
     parentTitle: parentId ? byId.get(parentId)?.title?.trim() || parentId : null,
     state: agentState(agent),
   };

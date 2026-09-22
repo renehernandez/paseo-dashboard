@@ -18,6 +18,13 @@ import {
   validTime,
   visibleDashboardRows,
 } from "./dashboard-model";
+import {
+  INITIAL_DISCLOSURE,
+  reconcileDisclosure,
+  toggleGroup,
+  toggleOther,
+  togglePreview,
+} from "./dashboard-disclosure";
 import { DirectoryStore } from "./directory-store";
 import { PreviewSession, type PreviewSessionSnapshot } from "./timeline-preview";
 
@@ -40,16 +47,6 @@ function timeAgo(timestamp: string, now: number): string {
 
 function titleFor(agent: DashboardAgent): string {
   return agent.title?.trim() || `Agent ${agent.id.slice(0, 8)}`;
-}
-
-function retainKeys(current: ReadonlySet<string>, valid: ReadonlySet<string>) {
-  const next = new Set([...current].filter((key) => valid.has(key)));
-  return next.size === current.size ? current : next;
-}
-
-function removeKeysWithPrefix(current: ReadonlySet<string>, prefix: string) {
-  const next = new Set([...current].filter((key) => !key.startsWith(prefix)));
-  return next.size === current.size ? current : next;
 }
 
 function stateColor(theme: PluginTheme, state: DashboardState): string {
@@ -288,11 +285,12 @@ function BackgroundRow({
   onTogglePreview,
 }: BackgroundRowProps) {
   const { agent, state } = item;
-  const activity = validTime(agent.updatedAt)
-    ? `Updated ${timeAgo(agent.updatedAt, now)}`
-    : validTime(agent.createdAt)
-      ? `Created ${timeAgo(agent.createdAt, now)}`
-      : "Activity time unavailable";
+  const activity =
+    validTime(agent.updatedAt) !== null
+      ? `Updated ${timeAgo(agent.updatedAt, now)}`
+      : validTime(agent.createdAt) !== null
+        ? `Created ${timeAgo(agent.createdAt, now)}`
+        : "Activity time unavailable";
   const context = item.parentTitle ? ` · Parent: ${item.parentTitle}` : "";
   return (
     <View
@@ -345,9 +343,7 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
   useEffect(() => store.start(), [store]);
 
   const [now, setNow] = useState(() => Date.now());
-  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set());
-  const [otherExpanded, setOtherExpanded] = useState(false);
-  const [previewKeys, setPreviewKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [disclosure, setDisclosure] = useState(INITIAL_DISCLOSURE);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(timer);
@@ -355,57 +351,26 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
 
   const projection = useMemo(() => buildDashboardProjection(snapshot.agents), [snapshot.agents]);
   useEffect(() => {
-    const groups = new Set(
-      projection.interactive
-        .filter(({ background }) => background.length)
-        .map(({ agent }) => agent.id),
-    );
-    const validPreviewKeys = new Set([
-      ...projection.interactive.map(({ agent }) => `interactive:${agent.id}`),
-      ...projection.interactive.flatMap(({ agent, background }) =>
-        background.map(({ agent: item }) => `background:${agent.id}:${item.id}`),
-      ),
-      ...projection.otherBackground.map(({ agent }) => `other:${agent.id}`),
-    ]);
-    setExpandedGroups((current) => retainKeys(current, groups));
-    setPreviewKeys((current) => retainKeys(current, validPreviewKeys));
-    if (projection.otherBackground.length === 0) setOtherExpanded(false);
+    setDisclosure((current) => reconcileDisclosure(current, projection));
   }, [projection]);
 
   const rows = useMemo(
-    () => visibleDashboardRows(projection, expandedGroups, otherExpanded),
-    [expandedGroups, otherExpanded, projection],
+    () =>
+      visibleDashboardRows(
+        projection,
+        disclosure.expandedGroups,
+        disclosure.otherExpanded,
+      ),
+    [disclosure.expandedGroups, disclosure.otherExpanded, projection],
   );
   const counts = useMemo(() => countStates(snapshot.agents), [snapshot.agents]);
   const openAgent = navigation ? (agentId: string) => navigation.openAgent({ agentId }) : undefined;
 
-  const togglePreview = (key: string) =>
-    setPreviewKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const toggleGroup = (group: InteractiveAgent) => {
-    const closing = expandedGroups.has(group.agent.id);
-    setExpandedGroups((current) => {
-      const next = new Set(current);
-      if (closing) next.delete(group.agent.id);
-      else next.add(group.agent.id);
-      return next;
-    });
-    if (closing) {
-      setPreviewKeys((previews) =>
-        removeKeysWithPrefix(previews, `background:${group.agent.id}:`),
-      );
-    }
-  };
-  const toggleOther = () => {
-    if (otherExpanded) {
-      setPreviewKeys((previews) => removeKeysWithPrefix(previews, "other:"));
-    }
-    setOtherExpanded(!otherExpanded);
-  };
+  const togglePreviewKey = (key: string) =>
+    setDisclosure((current) => togglePreview(current, key));
+  const toggleGroupDisclosure = (group: InteractiveAgent) =>
+    setDisclosure((current) => toggleGroup(current, group.agent.id));
+  const toggleOtherDisclosure = () => setDisclosure(toggleOther);
 
   const renderRow = ({ item }: { item: DashboardRow }) => {
     if (item.kind === "interactive") {
@@ -418,10 +383,10 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
           paseo={paseo}
           onOpen={openAgent}
           now={now}
-          groupExpanded={expandedGroups.has(item.group.agent.id)}
-          previewExpanded={previewKeys.has(previewKey)}
-          onToggleGroup={() => toggleGroup(item.group)}
-          onTogglePreview={() => togglePreview(previewKey)}
+          groupExpanded={disclosure.expandedGroups.has(item.group.agent.id)}
+          previewExpanded={disclosure.previewKeys.has(previewKey)}
+          onToggleGroup={() => toggleGroupDisclosure(item.group)}
+          onTogglePreview={() => togglePreviewKey(previewKey)}
         />
       );
     }
@@ -429,13 +394,13 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
       return (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${otherExpanded ? "Hide" : "Show"} other background agents`}
-          accessibilityState={{ expanded: otherExpanded }}
-          onPress={toggleOther}
+          accessibilityLabel={`${disclosure.otherExpanded ? "Hide" : "Show"} other background agents`}
+          accessibilityState={{ expanded: disclosure.otherExpanded }}
+          onPress={toggleOtherDisclosure}
           style={{ padding: 12, borderRadius: 10, backgroundColor: theme.colors.surface2 }}
         >
           <Text style={{ color: theme.colors.foreground, fontSize: 17, fontWeight: "700" }}>
-            {otherExpanded ? "Hide" : "Show"} other background agents · {item.count}
+            {disclosure.otherExpanded ? "Hide" : "Show"} other background agents · {item.count}
           </Text>
         </Pressable>
       );
@@ -452,8 +417,8 @@ export function DashboardPanel({ theme, layout, workspaceId, navigation }: Plugi
         paseo={paseo}
         onOpen={openAgent}
         now={now}
-        previewExpanded={previewKeys.has(previewKey)}
-        onTogglePreview={() => togglePreview(previewKey)}
+        previewExpanded={disclosure.previewKeys.has(previewKey)}
+        onTogglePreview={() => togglePreviewKey(previewKey)}
       />
     );
   };
